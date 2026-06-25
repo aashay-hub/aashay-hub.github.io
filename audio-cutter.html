@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cut — trim audio, export clean</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --black:#0B0D0E;
+    --bone:#F2EFE9;
+    --signal:#E8542C;
+    --graphite:#3A3D3E;
+    --panel:#1A1C1D;
+    --panel-line:#2A2D2E;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --sans: 'Archivo', 'Arial Narrow', Arial, sans-serif;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html,body{
+    background:var(--black);
+    color:var(--bone);
+    font-family:var(--sans);
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001ms !important; transition-duration:0.001ms !important; }
+  }
+
+  .wrap{
+    max-width:880px;
+    margin:0 auto;
+    padding:56px 24px 90px;
+  }
+
+  /* ---- Header ---- */
+  header{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:24px;
+    margin-bottom:60px;
+    padding-bottom:22px;
+    position:relative;
+  }
+  header::after{
+    content:'';
+    position:absolute;
+    left:0; right:0; bottom:0;
+    height:1px;
+    background:linear-gradient(90deg, var(--signal) 0%, var(--signal) 64px, var(--panel-line) 64px, var(--panel-line) 100%);
+  }
+
+  .wordmark{
+    font-family:var(--sans);
+    font-weight:800;
+    font-size:clamp(34px,6vw,56px);
+    letter-spacing:-0.035em;
+    text-transform:uppercase;
+    line-height:0.88;
+  }
+  .wordmark span{ color:var(--signal); }
+
+  .tagline{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:0.05em;
+    color:#83878a;
+    text-align:right;
+    max-width:220px;
+    line-height:1.6;
+  }
+
+  /* ---- Drop zone ---- */
+  .dropzone{
+    border:1px dashed var(--graphite);
+    border-radius:3px;
+    padding:72px 24px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color 0.15s ease, background 0.15s ease, transform 0.25s cubic-bezier(.16,1,.3,1), opacity 0.25s ease;
+    background:var(--panel);
+  }
+  .dropzone:hover{ transform:translateY(-2px); }
+  .dropzone:hover, .dropzone.drag{
+    border-color:var(--signal);
+    background:#1d1411;
+  }
+  .dropzone-icon{
+    font-family:var(--mono);
+    font-size:28px;
+    color:var(--graphite);
+    margin-bottom:18px;
+    transition:color 0.15s ease;
+  }
+  .dropzone:hover .dropzone-icon, .dropzone.drag .dropzone-icon{ color:var(--signal); }
+  .dropzone-label{
+    font-family:var(--mono);
+    font-size:13px;
+    letter-spacing:0.05em;
+    color:var(--bone);
+    text-transform:uppercase;
+  }
+  .dropzone-sub{
+    font-family:var(--mono);
+    font-size:11px;
+    color:#7A7D7E;
+    margin-top:12px;
+    letter-spacing:0.01em;
+  }
+  .dropzone input{ display:none; }
+
+  /* ---- Editor ---- */
+  .editor{ display:none; }
+  .editor.active{
+    display:block;
+    animation:editorReveal 0.5s cubic-bezier(.16,1,.3,1) both;
+  }
+  @keyframes editorReveal{
+    from{ opacity:0; transform:translateY(14px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+
+  .dropzone.leaving{ opacity:0; transform:scale(0.98); }
+
+  .file-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom:18px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:#9A9D9E;
+  }
+  .file-row .fname{ color:var(--bone); }
+  .file-row .reset-link{
+    color:var(--signal);
+    cursor:pointer;
+    background:none;
+    border:none;
+    font-family:var(--mono);
+    font-size:12px;
+    text-decoration:underline;
+    text-underline-offset:3px;
+  }
+
+  /* tape strip */
+  .tape-frame{
+    position:relative;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:2px;
+    padding:0;
+    overflow:visible;
+  }
+
+  .tape-inner{
+    overflow:hidden;
+    border-radius:2px;
+  }
+
+  .sprockets{
+    display:flex;
+    justify-content:space-between;
+    padding:6px 10px;
+    background:#141617;
+  }
+  .sprockets span{
+    width:5px; height:5px;
+    border-radius:50%;
+    background:#34373a;
+    flex-shrink:0;
+  }
+  .sprockets.bottom{ background:#141617; }
+
+  .waveform-stage{
+    position:relative;
+    height:180px;
+    background:var(--panel);
+  }
+
+  canvas#wave{
+    display:block;
+    width:100%;
+    height:100%;
+  }
+
+  /* selection overlay handles — span the full tape-frame height, overlaying sprockets too (intentional: looks like a physical tape clamp) */
+  .handle{
+    position:absolute;
+    top:0; bottom:0;
+    width:14px;
+    margin-left:-7px; /* center the hit-area exactly on the boundary line */
+    cursor:ew-resize;
+    z-index:6;
+    touch-action:none;
+  }
+  .handle::before{
+    content:'';
+    position:absolute;
+    top:-6px; bottom:-6px;
+    left:50%;
+    width:2px;
+    background:var(--signal);
+    transform:translateX(-50%);
+    transition:box-shadow 0.15s ease;
+  }
+  .handle:hover::before, .handle.active::before{
+    box-shadow:0 0 0 1px var(--signal), 0 0 16px rgba(232,84,44,0.55);
+  }
+  .handle .grip{
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%) scale(1);
+    width:14px;
+    height:38px;
+    background:var(--signal);
+    border-radius:3px;
+    transition:transform 0.15s cubic-bezier(.34,1.56,.64,1), box-shadow 0.15s ease;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4);
+  }
+  .handle:hover .grip, .handle.active .grip{
+    transform:translate(-50%,-50%) scale(1.12);
+    box-shadow:0 2px 10px rgba(232,84,44,0.5);
+  }
+  .handle .grip::after{
+    content:'';
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    width:2px;
+    height:16px;
+    background:rgba(11,13,14,0.5);
+    box-shadow:4px 0 0 rgba(11,13,14,0.5), -4px 0 0 rgba(11,13,14,0.5);
+  }
+
+  .selection-glow{
+    position:absolute;
+    top:0; bottom:0;
+    background:linear-gradient(90deg, rgba(232,84,44,0.07), rgba(232,84,44,0.13), rgba(232,84,44,0.07));
+    background-size:200% 100%;
+    pointer-events:none;
+    z-index:1;
+    animation:tapeShimmer 3.2s linear infinite;
+  }
+  @keyframes tapeShimmer{
+    0%{ background-position:0% 0; }
+    100%{ background-position:200% 0; }
+  }
+
+  .playhead{
+    position:absolute;
+    top:0; bottom:0;
+    width:1px;
+    background:var(--bone);
+    z-index:4;
+    pointer-events:none;
+    opacity:0.85;
+    box-shadow:0 0 6px rgba(242,239,233,0.6);
+    transition:left 0.05s linear;
+  }
+  .playhead.playing{
+    width:2px;
+    background:var(--signal);
+    box-shadow:0 0 10px rgba(232,84,44,0.8);
+    animation:playPulse 0.9s ease-in-out infinite;
+  }
+  @keyframes playPulse{
+    0%,100%{ opacity:0.75; }
+    50%{ opacity:1; }
+  }
+  .playhead.seeking{ transition:left 0.12s ease-out; }
+
+  /* time readout */
+  .time-row{
+    display:flex;
+    justify-content:space-between;
+    font-family:var(--mono);
+    font-size:11px;
+    color:#7A7D7E;
+    padding:8px 10px;
+    background:#141617;
+    letter-spacing:0.02em;
+  }
+
+  /* selection readout — now editable time inputs */
+  .selection-readout{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:1px;
+    margin-top:24px;
+    background:var(--panel-line);
+    border:1px solid var(--panel-line);
+    border-radius:2px;
+    overflow:hidden;
+  }
+  .sr-item{
+    background:var(--panel);
+    padding:16px 18px;
+  }
+  .sr-item .sr-label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:0.12em;
+    color:#7A7D7E;
+    text-transform:uppercase;
+    margin-bottom:10px;
+  }
+  .sr-item.length .sr-value{
+    font-family:var(--mono);
+    font-size:22px;
+    color:var(--signal);
+    font-weight:600;
+    letter-spacing:0.01em;
+  }
+  .time-input{
+    width:100%;
+    background:transparent;
+    border:none;
+    border-bottom:1px solid var(--graphite);
+    color:var(--bone);
+    font-family:var(--mono);
+    font-size:20px;
+    font-weight:500;
+    letter-spacing:0.01em;
+    padding:2px 0 6px;
+    transition:border-color 0.15s ease;
+  }
+  .time-input:focus{
+    outline:none;
+    border-bottom-color:var(--signal);
+  }
+  .time-input::-webkit-inner-spin-button{ display:none; }
+
+  /* filename field */
+  .filename-row{
+    margin-top:20px;
+  }
+  .filename-row .sr-label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:0.12em;
+    color:#7A7D7E;
+    text-transform:uppercase;
+    margin-bottom:10px;
+    display:block;
+  }
+  .filename-field{
+    display:flex;
+    align-items:center;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:2px;
+    overflow:hidden;
+  }
+  .filename-field input{
+    flex:1;
+    background:transparent;
+    border:none;
+    color:var(--bone);
+    font-family:var(--mono);
+    font-size:14px;
+    padding:14px 4px 14px 16px;
+    min-width:0;
+  }
+  .filename-field input:focus{ outline:none; }
+  .filename-ext{
+    font-family:var(--mono);
+    font-size:14px;
+    color:#7A7D7E;
+    padding:14px 16px 14px 4px;
+    flex-shrink:0;
+  }
+
+  /* transport */
+  .transport{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:12px;
+    margin-top:32px;
+    padding-top:26px;
+    border-top:1px solid var(--panel-line);
+  }
+
+  button.tbtn{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    background:transparent;
+    border:1px solid var(--graphite);
+    color:var(--bone);
+    padding:13px 20px;
+    border-radius:3px;
+    cursor:pointer;
+    transition:border-color 0.12s ease, background 0.12s ease, color 0.12s ease, transform 0.12s cubic-bezier(.34,1.56,.64,1);
+  }
+  button.tbtn:hover{ border-color:var(--bone); transform:translateY(-1px); }
+  button.tbtn:active{ transform:translateY(1px) scale(0.97); }
+  button.tbtn:disabled{ opacity:0.35; cursor:not-allowed; transform:none; }
+
+  button.tbtn.primary{
+    background:var(--signal);
+    border-color:var(--signal);
+    color:var(--black);
+    font-weight:600;
+    margin-left:auto;
+    position:relative;
+    overflow:hidden;
+  }
+  button.tbtn.primary:hover{ background:#ff6a3d; border-color:#ff6a3d; transform:translateY(-1px); }
+  button.tbtn.primary:active{ transform:translateY(1px) scale(0.97); }
+  button.tbtn.primary.success{
+    background:var(--bone);
+    border-color:var(--bone);
+    animation:successFlash 0.4s ease;
+  }
+  @keyframes successFlash{
+    0%{ transform:scale(1); }
+    40%{ transform:scale(1.04); }
+    100%{ transform:scale(1); }
+  }
+
+  .play-icon{ display:inline-block; width:0; height:0; }
+
+  /* format select */
+  .format-select{
+    font-family:var(--mono);
+    font-size:12px;
+    background:var(--panel);
+    border:1px solid var(--graphite);
+    color:var(--bone);
+    padding:12px 14px;
+    border-radius:2px;
+    cursor:pointer;
+  }
+
+  .status-line{
+    margin-top:16px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:#7A7D7E;
+    min-height:18px;
+  }
+  .status-line.error{ color:var(--signal); }
+
+  footer{
+    margin-top:64px;
+    font-family:var(--mono);
+    font-size:11px;
+    color:#5C5F60;
+    border-top:1px solid var(--panel-line);
+    padding-top:18px;
+  }
+
+  /* ---- Ad slot ---- */
+  .ad-slot{
+    margin-top:48px;
+    display:flex;
+    justify-content:center;
+    min-height:100px;
+  }
+  /* Placeholder shown only when no ad has rendered into the slot yet —
+     remove .ad-slot-placeholder (or just let AdSense fill .ad-container)
+     once a live data-ad-client / data-ad-slot pair is in place. */
+  .ad-slot-placeholder{
+    width:100%;
+    max-width:728px;
+    min-height:90px;
+    border:1px dashed var(--panel-line);
+    border-radius:3px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:#4A4D4E;
+  }
+
+  @media (max-width:560px){
+    header{ flex-direction:column; align-items:flex-start; gap:12px; }
+    .tagline{ text-align:left; }
+    .transport{ flex-wrap:wrap; }
+    button.tbtn.primary{ margin-left:0; width:100%; order:10; }
+    .selection-readout{ grid-template-columns:1fr 1fr; }
+    .sr-item.length{ grid-column:1 / -1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="wordmark">CUT<span>.</span></div>
+    <div class="tagline">LOAD A TRACK. DRAG THE EDGES. EXPORT THE PIECE YOU WANT.</div>
+  </header>
+
+  <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose an audio file">
+    <div class="dropzone-icon">▴▾</div>
+    <div class="dropzone-label">Drop an audio file, or click to browse</div>
+    <div class="dropzone-sub">MP3 · WAV · M4A · OGG — stays on this device, nothing is uploaded</div>
+    <input type="file" id="fileInput" accept="audio/*" />
+  </div>
+
+  <div class="editor" id="editor">
+    <div class="file-row">
+      <span class="fname" id="fname">—</span>
+      <button class="reset-link" id="resetBtn">load a different file</button>
+    </div>
+
+    <div class="tape-frame" id="tapeFrame">
+      <div class="tape-inner">
+        <div class="sprockets" id="sprocketsTop"></div>
+        <div class="waveform-stage" id="stage">
+          <canvas id="wave"></canvas>
+          <div class="selection-glow" id="selectionGlow"></div>
+          <div class="playhead" id="playhead" style="left:0%"></div>
+        </div>
+        <div class="sprockets bottom" id="sprocketsBottom"></div>
+        <div class="time-row">
+          <span id="timeStart">0:00.00</span>
+          <span id="timeTotal">0:00.00</span>
+        </div>
+      </div>
+      <div class="handle" id="handleStart" style="left:0%"><div class="grip"></div></div>
+      <div class="handle" id="handleEnd" style="left:100%"><div class="grip"></div></div>
+    </div>
+
+    <div class="selection-readout">
+      <div class="sr-item">
+        <div class="sr-label">In — mm:ss.ms</div>
+        <input type="text" class="time-input" id="inInput" value="0:00.00" inputmode="decimal" />
+      </div>
+      <div class="sr-item">
+        <div class="sr-label">Out — mm:ss.ms</div>
+        <input type="text" class="time-input" id="outInput" value="0:00.00" inputmode="decimal" />
+      </div>
+      <div class="sr-item length">
+        <div class="sr-label">Length</div>
+        <div class="sr-value" id="srLen">0:00.00</div>
+      </div>
+    </div>
+
+    <div class="filename-row">
+      <label class="sr-label" for="filenameInput">Save cropped file as</label>
+      <div class="filename-field">
+        <input type="text" id="filenameInput" />
+        <span class="filename-ext" id="filenameExt">.wav</span>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button class="tbtn" id="playBtn">▶ play selection</button>
+      <select class="format-select" id="formatSelect">
+        <option value="wav">Export as WAV</option>
+        <option value="webm">Export as WebM/Opus</option>
+      </select>
+      <button class="tbtn primary" id="exportBtn">Export clip</button>
+    </div>
+
+    <div class="status-line" id="statusLine"></div>
+  </div>
+
+  <!--
+    AD SLOT — wire this up once the page is hosted on a real domain with an
+    approved AdSense account. Steps:
+      1. In AdSense > Ads > By ad unit, create a "Display ad" unit.
+      2. Copy your data-ad-client (ca-pub-XXXXXXXXXXXXXXXX) and the new
+         data-ad-slot ID it gives you.
+      3. Replace ca-pub-0000000000000000 and 0000000000 below with those values.
+      4. Add this once, near the top of <head>, on every page:
+         <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
+      5. Delete the .ad-slot-placeholder div below — AdSense fills the <ins> tag itself.
+    Until then this just shows an empty placeholder so the layout reads correctly.
+  -->
+  <div class="ad-slot">
+    <div class="ad-slot-placeholder">Ad slot — connect AdSense to activate</div>
+    <!--
+    <ins class="adsbygoogle"
+         style="display:block; width:100%; max-width:728px;"
+         data-ad-client="ca-pub-0000000000000000"
+         data-ad-slot="0000000000"
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+    -->
+  </div>
+
+  <footer>
+    Runs entirely in your browser. Files are decoded locally and never leave your device.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const editor = document.getElementById('editor');
+  const fname = document.getElementById('fname');
+  const resetBtn = document.getElementById('resetBtn');
+  const stage = document.getElementById('stage');
+  const tapeFrame = document.getElementById('tapeFrame');
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d');
+  const handleStart = document.getElementById('handleStart');
+  const handleEnd = document.getElementById('handleEnd');
+  const playhead = document.getElementById('playhead');
+  const selectionGlow = document.getElementById('selectionGlow');
+  const timeStart = document.getElementById('timeStart');
+  const timeTotal = document.getElementById('timeTotal');
+  const srIn = document.getElementById('inInput');
+  const srOut = document.getElementById('outInput');
+  const srLen = document.getElementById('srLen');
+  const filenameInput = document.getElementById('filenameInput');
+  const filenameExt = document.getElementById('filenameExt');
+  const playBtn = document.getElementById('playBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const formatSelect = document.getElementById('formatSelect');
+  const statusLine = document.getElementById('statusLine');
+  const sprocketsTop = document.getElementById('sprocketsTop');
+  const sprocketsBottom = document.getElementById('sprocketsBottom');
+
+  let audioCtx = null;
+  let audioBuffer = null;
+  let duration = 0;
+  let selStart = 0; // fraction 0-1
+  let selEnd = 1;   // fraction 0-1
+  let isPlaying = false;
+  let playSource = null;
+  let playStartedAt = 0;
+  let playOffset = 0;
+  let rafId = null;
+
+  function buildSprockets(){
+    [sprocketsTop, sprocketsBottom].forEach(row=>{
+      row.innerHTML = '';
+      const count = 40;
+      for(let i=0;i<count;i++){
+        const s = document.createElement('span');
+        row.appendChild(s);
+      }
+    });
+  }
+  buildSprockets();
+
+  function fmtTime(sec){
+    if(!isFinite(sec) || sec < 0) sec = 0;
+    const m = Math.floor(sec/60);
+    const s = sec - m*60;
+    return m + ':' + s.toFixed(2).padStart(5,'0');
+  }
+
+  // Accepts "m:ss.ms", "mm:ss", or a bare number of seconds. Returns seconds or null if unparseable.
+  function parseTime(str){
+    if(typeof str !== 'string') return null;
+    str = str.trim();
+    if(str === '') return null;
+    if(str.includes(':')){
+      const parts = str.split(':');
+      if(parts.length !== 2) return null;
+      const m = parseFloat(parts[0]);
+      const s = parseFloat(parts[1]);
+      if(isNaN(m) || isNaN(s)) return null;
+      return m*60 + s;
+    }
+    const v = parseFloat(str);
+    return isNaN(v) ? null : v;
+  }
+
+  function setStatus(msg, isError){
+    statusLine.textContent = msg || '';
+    statusLine.classList.toggle('error', !!isError);
+  }
+
+  // ---- File loading ----
+  dropzone.addEventListener('click', ()=> fileInput.click());
+  dropzone.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fileInput.click(); }
+  });
+  ['dragenter','dragover'].forEach(evt=>{
+    dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.add('drag'); });
+  });
+  ['dragleave','drop'].forEach(evt=>{
+    dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.remove('drag'); });
+  });
+  dropzone.addEventListener('drop', (e)=>{
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(f) loadFile(f);
+  });
+  fileInput.addEventListener('change', (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(f) loadFile(f);
+  });
+
+  resetBtn.addEventListener('click', ()=>{
+    stopPlayback();
+    editor.classList.remove('active');
+    dropzone.classList.remove('leaving');
+    dropzone.style.display = 'block';
+    fileInput.value = '';
+    audioBuffer = null;
+  });
+
+  async function loadFile(file){
+    setStatus('Decoding audio…');
+    try{
+      if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const arrayBuf = await file.arrayBuffer();
+      const decoded = await audioCtx.decodeAudioData(arrayBuf.slice(0));
+      audioBuffer = decoded;
+      duration = decoded.duration;
+      fname.textContent = file.name;
+      selStart = 0;
+      selEnd = 1;
+      dropzone.classList.add('leaving');
+      setTimeout(()=>{ dropzone.style.display = 'none'; }, 240);
+      editor.classList.add('active');
+      drawWaveform(true);
+      updateHandles();
+      updateReadouts();
+      timeTotal.textContent = fmtTime(duration);
+      const base = file.name.replace(/\.[^/.]+$/, '');
+      filenameInput.value = base + '-cut';
+      filenameExt.textContent = '.' + formatSelect.value;
+      setStatus('');
+    }catch(err){
+      console.error(err);
+      setStatus('Could not decode that file. Try a standard MP3 or WAV.', true);
+    }
+  }
+
+  // ---- Waveform drawing ----
+  let peakCache = null; // {peaks: [[min,max],...], w, h}
+
+  function computePeaks(w, h){
+    const data = audioBuffer.getChannelData(0);
+    const samplesPerPx = Math.max(1, Math.floor(data.length / w));
+    const peaks = new Array(w);
+    for(let x=0; x<w; x++){
+      let min = 1.0, max = -1.0;
+      const offset = x * samplesPerPx;
+      for(let i=0;i<samplesPerPx;i++){
+        const v = data[offset+i] || 0;
+        if(v < min) min = v;
+        if(v > max) max = v;
+      }
+      peaks[x] = [min, max];
+    }
+    return peaks;
+  }
+
+  function paintWaveform(revealFrac){
+    const rect = stage.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    const mid = h/2;
+    ctx.clearRect(0,0,w,h);
+
+    if(!peakCache || peakCache.w !== Math.round(w)){
+      peakCache = { peaks: computePeaks(Math.round(w), h), w: Math.round(w), h };
+    }
+    const peaks = peakCache.peaks;
+
+    const startPx = selStart * w;
+    const endPx = selEnd * w;
+    const revealPx = revealFrac == null ? w : w * revealFrac;
+
+    for(let x=0; x<w && x<revealPx; x++){
+      const [min, max] = peaks[x] || [0,0];
+      const y1 = mid + min*mid*0.92;
+      const y2 = mid + max*mid*0.92;
+      const inSelection = x >= startPx && x <= endPx;
+      ctx.strokeStyle = inSelection ? '#E8542C' : '#3A3D3E';
+      ctx.beginPath();
+      ctx.moveTo(x+0.5, y1);
+      ctx.lineTo(x+0.5, y2);
+      ctx.stroke();
+    }
+
+    // center line, only as far as revealed
+    ctx.strokeStyle = 'rgba(242,239,233,0.06)';
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(Math.min(w, revealPx), mid);
+    ctx.stroke();
+  }
+
+  function drawWaveform(animateIn){
+    const dpr = window.devicePixelRatio || 1;
+    const rect = stage.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    peakCache = null; // dimensions may have changed; recompute on next paint
+
+    if(animateIn){
+      const start = performance.now();
+      const duration_ms = 650;
+      function frame(now){
+        const t = Math.min(1, (now-start)/duration_ms);
+        const eased = 1 - Math.pow(1-t, 3); // ease-out cubic
+        paintWaveform(eased);
+        if(t < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    } else {
+      paintWaveform(null);
+    }
+  }
+
+  window.addEventListener('resize', ()=>{ if(audioBuffer) drawWaveform(); });
+
+  // ---- Handles ----
+  function updateHandles(){
+    handleStart.style.left = (selStart*100) + '%';
+    handleEnd.style.left = (selEnd*100) + '%';
+    selectionGlow.style.left = (selStart*100) + '%';
+    selectionGlow.style.width = ((selEnd-selStart)*100) + '%';
+  }
+
+  function updateReadouts(){
+    if(document.activeElement !== srIn) srIn.value = fmtTime(selStart*duration);
+    if(document.activeElement !== srOut) srOut.value = fmtTime(selEnd*duration);
+    srLen.textContent = fmtTime((selEnd-selStart)*duration);
+    timeStart.textContent = fmtTime(selStart*duration);
+  }
+
+  function applyTimeInput(input, isStart){
+    const sec = parseTime(input.value);
+    if(sec === null){
+      input.value = fmtTime((isStart ? selStart : selEnd) * duration);
+      setStatus('Could not read that time — use mm:ss, like 1:23.50.', true);
+      return;
+    }
+    if(sec > duration){
+      setStatus('That\'s past the end of the track (' + fmtTime(duration) + ') — clamped to the end.', true);
+    } else {
+      setStatus('');
+    }
+    let frac = duration > 0 ? sec/duration : 0;
+    frac = Math.max(0, Math.min(1, frac));
+    const minGap = 0.005;
+    if(isStart){
+      selStart = Math.max(0, Math.min(frac, 1));
+      if(selStart >= selEnd - minGap){
+        // typed start now overruns the current end — extend the clip to the file's end instead of
+        // squeezing a near-zero selection, since that's almost always what the person actually wants
+        selEnd = 1;
+        selStart = Math.min(selStart, 1 - minGap);
+      }
+    } else {
+      selEnd = Math.min(1, Math.max(frac, minGap));
+      if(selEnd <= selStart + minGap){
+        selStart = 0;
+      }
+    }
+    if(isPlaying) stopPlayback();
+    playOffset = 0;
+    movePlayheadTo(selStart);
+    updateHandles();
+    updateReadouts();
+    drawWaveform();
+  }
+
+  srIn.addEventListener('change', ()=> applyTimeInput(srIn, true));
+  srOut.addEventListener('change', ()=> applyTimeInput(srOut, false));
+  srIn.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); srIn.blur(); } });
+  srOut.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); srOut.blur(); } });
+
+  function makeDraggable(handle, isStart){
+    let dragging = false;
+
+    function onDown(clientX){
+      dragging = true;
+      handle.classList.add('active');
+      document.body.style.userSelect = 'none';
+    }
+    function onMove(clientX){
+      if(!dragging) return;
+      const rect = tapeFrame.getBoundingClientRect();
+      let frac = (clientX - rect.left) / rect.width;
+      frac = Math.max(0, Math.min(1, frac));
+      const minGap = 0.005;
+      if(isStart){
+        selStart = Math.min(frac, selEnd - minGap);
+        selStart = Math.max(0, selStart);
+      } else {
+        selEnd = Math.max(frac, selStart + minGap);
+        selEnd = Math.min(1, selEnd);
+      }
+      if(isPlaying) stopPlayback();
+      playOffset = 0;
+      movePlayheadTo(selStart);
+      updateHandles();
+      updateReadouts();
+      drawWaveform();
+    }
+    function onUp(){ dragging = false; handle.classList.remove('active'); document.body.style.userSelect = ''; }
+
+    handle.addEventListener('mousedown', (e)=>{ e.preventDefault(); onDown(e.clientX); });
+    window.addEventListener('mousemove', (e)=> onMove(e.clientX));
+    window.addEventListener('mouseup', onUp);
+
+    handle.addEventListener('touchstart', (e)=>{ onDown(e.touches[0].clientX); }, {passive:true});
+    window.addEventListener('touchmove', (e)=>{
+      if(dragging && e.touches[0]) onMove(e.touches[0].clientX);
+    }, {passive:true});
+    window.addEventListener('touchend', onUp);
+  }
+  makeDraggable(handleStart, true);
+  makeDraggable(handleEnd, false);
+
+  // click on stage (outside handles) to seek playhead within selection
+  stage.addEventListener('click', (e)=>{
+    if(e.target === handleStart || e.target === handleEnd) return;
+    if(e.target.closest('.handle')) return;
+    const rect = stage.getBoundingClientRect();
+    let frac = (e.clientX - rect.left) / rect.width;
+    frac = Math.max(selStart, Math.min(selEnd, frac));
+    playOffset = frac*duration - selStart*duration;
+    playhead.classList.add('seeking');
+    movePlayheadTo(frac);
+    setTimeout(()=> playhead.classList.remove('seeking'), 150);
+  });
+
+  function movePlayheadTo(frac){
+    playhead.style.left = (frac*100) + '%';
+  }
+
+  // ---- Playback ----
+  function stopPlayback(){
+    if(playSource){
+      try{ playSource.stop(); }catch(e){}
+      playSource = null;
+    }
+    isPlaying = false;
+    playBtn.textContent = '▶ play selection';
+    playhead.classList.remove('playing');
+    if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  }
+
+  playBtn.addEventListener('click', ()=>{
+    if(!audioBuffer) return;
+    if(isPlaying){ stopPlayback(); return; }
+
+    const startSec = selStart*duration + (playOffset>0 && playOffset < (selEnd-selStart)*duration ? playOffset : 0);
+    const clipDur = (selEnd*duration) - startSec;
+    if(clipDur <= 0) { playOffset = 0; }
+
+    playSource = audioCtx.createBufferSource();
+    playSource.buffer = audioBuffer;
+    playSource.connect(audioCtx.destination);
+    const actualStart = selStart*duration + (playOffset || 0);
+    const actualDur = Math.max(0, selEnd*duration - actualStart);
+    playSource.start(0, actualStart, actualDur);
+    playStartedAt = audioCtx.currentTime;
+    isPlaying = true;
+    playBtn.textContent = '■ stop';
+    playhead.classList.remove('seeking');
+    playhead.classList.add('playing');
+
+    playSource.onended = ()=>{
+      isPlaying = false;
+      playBtn.textContent = '▶ play selection';
+      playOffset = 0;
+      playhead.classList.remove('playing');
+      movePlayheadTo(selStart);
+      if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
+    };
+
+    function tick(){
+      if(!isPlaying) return;
+      const elapsed = audioCtx.currentTime - playStartedAt;
+      const curSec = actualStart + elapsed;
+      const frac = curSec/duration;
+      if(frac >= selEnd){
+        movePlayheadTo(selEnd);
+      } else {
+        movePlayheadTo(frac);
+        rafId = requestAnimationFrame(tick);
+      }
+    }
+    tick();
+  });
+
+  formatSelect.addEventListener('change', ()=>{
+    filenameExt.textContent = '.' + formatSelect.value;
+  });
+
+  // ---- Export ----
+  function bufferToWav(buffer){
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const length = buffer.length * numChannels * 2 + 44;
+    const arrBuf = new ArrayBuffer(length);
+    const view = new DataView(arrBuf);
+
+    function writeString(offset, str){
+      for(let i=0;i<str.length;i++) view.setUint8(offset+i, str.charCodeAt(i));
+    }
+
+    writeString(0,'RIFF');
+    view.setUint32(4, 36 + buffer.length*numChannels*2, true);
+    writeString(8,'WAVE');
+    writeString(12,'fmt ');
+    view.setUint32(16,16,true);
+    view.setUint16(20,1,true);
+    view.setUint16(22,numChannels,true);
+    view.setUint32(24,sampleRate,true);
+    view.setUint32(28,sampleRate*numChannels*2,true);
+    view.setUint16(32,numChannels*2,true);
+    view.setUint16(34,16,true);
+    writeString(36,'data');
+    view.setUint32(40, buffer.length*numChannels*2, true);
+
+    let offset = 44;
+    const channels = [];
+    for(let c=0;c<numChannels;c++) channels.push(buffer.getChannelData(c));
+
+    for(let i=0;i<buffer.length;i++){
+      for(let c=0;c<numChannels;c++){
+        let sample = Math.max(-1, Math.min(1, channels[c][i]));
+        sample = sample < 0 ? sample*0x8000 : sample*0x7FFF;
+        view.setInt16(offset, sample, true);
+        offset += 2;
+      }
+    }
+    return new Blob([view], {type:'audio/wav'});
+  }
+
+  function sliceBuffer(buffer, startSec, endSec){
+    const sampleRate = buffer.sampleRate;
+    const startSample = Math.floor(startSec*sampleRate);
+    const endSample = Math.floor(endSec*sampleRate);
+    const frameCount = Math.max(1, endSample - startSample);
+    const newBuf = audioCtx.createBuffer(buffer.numberOfChannels, frameCount, sampleRate);
+    for(let c=0;c<buffer.numberOfChannels;c++){
+      const oldData = buffer.getChannelData(c);
+      const newData = newBuf.getChannelData(c);
+      for(let i=0;i<frameCount;i++){
+        newData[i] = oldData[startSample+i] || 0;
+      }
+    }
+    return newBuf;
+  }
+
+  async function exportWebm(buffer, startSec, endSec){
+    return new Promise((resolve, reject)=>{
+      try{
+        const offlineDuration = endSec - startSec;
+        const sliced = sliceBuffer(buffer, startSec, endSec);
+
+        // Render via a real-time MediaStreamDestination since OfflineAudioContext can't be captured directly.
+        const liveCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = liveCtx.createBufferSource();
+        src.buffer = sliced;
+        const dest = liveCtx.createMediaStreamDestination();
+        src.connect(dest);
+        const recorder = new MediaRecorder(dest.stream, {mimeType:'audio/webm;codecs=opus'});
+        const chunks = [];
+        recorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
+        recorder.onstop = ()=>{
+          liveCtx.close();
+          resolve(new Blob(chunks, {type:'audio/webm'}));
+        };
+        recorder.onerror = (e)=> reject(e.error || new Error('Recorder error'));
+        recorder.start();
+        src.start();
+        src.onended = ()=> setTimeout(()=> recorder.stop(), 50);
+        // safety stop
+        setTimeout(()=>{ if(recorder.state !== 'inactive') recorder.stop(); }, (offlineDuration*1000)+500);
+      }catch(err){ reject(err); }
+    });
+  }
+
+  exportBtn.addEventListener('click', async ()=>{
+    if(!audioBuffer) return;
+    const startSec = selStart*duration;
+    const endSec = selEnd*duration;
+    if(endSec - startSec < 0.02){
+      setStatus('Selection is too short to export.', true);
+      return;
+    }
+
+    exportBtn.disabled = true;
+    const format = formatSelect.value;
+    setStatus('Rendering clip…');
+
+    try{
+      let blob;
+      let ext;
+      if(format === 'wav'){
+        const sliced = sliceBuffer(audioBuffer, startSec, endSec);
+        blob = bufferToWav(sliced);
+        ext = 'wav';
+      } else {
+        if(typeof MediaRecorder === 'undefined'){
+          setStatus('WebM export not supported in this browser — try WAV.', true);
+          exportBtn.disabled = false;
+          return;
+        }
+        blob = await exportWebm(audioBuffer, startSec, endSec);
+        ext = 'webm';
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      let base = filenameInput.value.trim();
+      if(!base) base = (fname.textContent || 'clip').replace(/\.[^/.]+$/,'') + '-cut';
+      base = base.replace(/[\\/:*?"<>|]/g, '-').replace(/\.[^/.]+$/, '');
+      a.href = url;
+      a.download = base + '.' + ext;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(()=> URL.revokeObjectURL(url), 4000);
+      setStatus('Clip downloaded: ' + a.download);
+      exportBtn.classList.add('success');
+      setTimeout(()=> exportBtn.classList.remove('success'), 420);
+    }catch(err){
+      console.error(err);
+      setStatus('Export failed. Try WAV format instead.', true);
+    }finally{
+      exportBtn.disabled = false;
+    }
+  });
+
+})();
+</script>
+
+</body>
+</html>
